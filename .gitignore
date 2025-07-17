@@ -1,0 +1,68 @@
+# Environment variables and secrets
+.env
+*.env
+.env.*
+api_keys.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large model files and data
+*.safetensors
+*.bin
+*.h5
+*.onnx
+*.xml
+*.pt
+*.pth
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# User-specific files
+user_database/
+*.json
+!package.json
+!package-lock.json
+
+# History files
+.history/
+.history
+*/.history/
