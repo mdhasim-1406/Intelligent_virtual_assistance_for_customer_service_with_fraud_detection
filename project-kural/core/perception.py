@@ -5,13 +5,12 @@ This module handles speech-to-text conversion using OpenAI Whisper and
 sentiment analysis using OpenRouter's language models.
 """
 
-import whisper
+import os
+import logging
 import requests
 import json
-import logging
-from typing import Dict, Optional
-import os
 import tempfile
+from typing import Dict, Optional
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -26,12 +25,33 @@ class PerceptionModule:
     def __init__(self):
         """Initialize the perception module with Whisper model."""
         try:
+            # Import whisper and verify it's properly installed
+            import whisper
             logger.info("Loading Whisper model...")
+            
+            # This is the correct way to load the model
             self.whisper_model = whisper.load_model("base")
             logger.info("Whisper model loaded successfully")
+            
+        except ImportError as e:
+            logger.error(f"Whisper library not installed: {e}")
+            raise RuntimeError(
+                "OpenAI Whisper library is not installed. "
+                "Please install it using: pip install openai-whisper"
+            )
         except Exception as e:
             logger.error(f"Failed to load Whisper model: {e}")
-            raise RuntimeError(f"Could not initialize Whisper model: {e}")
+            raise RuntimeError(
+                "Failed to load Whisper model. This could be due to:\n"
+                "1. Missing internet connection for model download\n"
+                "2. Missing ffmpeg installation (required by Whisper)\n"
+                "3. Insufficient disk space\n"
+                f"Original error: {e}\n\n"
+                "Solutions:\n"
+                "- Install ffmpeg: sudo apt-get install ffmpeg (Linux) or brew install ffmpeg (Mac)\n"
+                "- Ensure stable internet connection for model download\n"
+                "- Free up disk space (models require ~500MB)"
+            )
     
     def transcribe_audio(self, audio_path: str) -> Dict[str, str]:
         """
@@ -76,21 +96,28 @@ class PerceptionModule:
                 "language_name": language_name
             }
             
+        except FileNotFoundError:
+            logger.error(f"Audio file not found during transcription: {audio_path}")
+            return {"text": "", "language": "en", "error": "Audio file not found"}
+        except PermissionError as e:
+            logger.error(f"Permission denied accessing audio file: {e}")
+            return {"text": "", "language": "en", "error": "Permission denied accessing audio file"}
+        except ValueError as e:
+            logger.error(f"Invalid audio file format: {e}")
+            return {"text": "", "language": "en", "error": f"Invalid audio file format: {str(e)}"}
+        except RuntimeError as e:
+            logger.error(f"Whisper runtime error: {e}")
+            return {"text": "", "language": "en", "error": f"Transcription failed: {str(e)}"}
         except Exception as e:
-            logger.error(f"Transcription failed: {e}")
-            return {
-                "text": "",
-                "language": "en",
-                "error": f"Transcription failed: {str(e)}"
-            }
+            logger.error(f"Unexpected transcription error: {e}")
+            return {"text": "", "language": "en", "error": f"Transcription failed: {str(e)}"}
     
-    def analyze_sentiment(self, text: str, openrouter_api_key: str) -> str:
+    def analyze_sentiment(self, text: str) -> str:
         """
         Analyze sentiment of text using OpenRouter API.
         
         Args:
             text (str): Text to analyze
-            openrouter_api_key (str): OpenRouter API key
             
         Returns:
             str: Sentiment classification ('Positive', 'Negative', or 'Neutral')
@@ -99,8 +126,10 @@ class PerceptionModule:
             logger.warning("Empty text provided for sentiment analysis")
             return "Neutral"
         
+        # Get API key from environment
+        openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
         if not openrouter_api_key:
-            logger.error("OpenRouter API key not provided")
+            logger.error("OPENROUTER_API_KEY not found in environment variables")
             return "Neutral"
         
         try:
@@ -171,11 +200,17 @@ class PerceptionModule:
         except requests.exceptions.Timeout:
             logger.error("OpenRouter API request timed out")
             return "Neutral"
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"OpenRouter API connection failed: {e}")
+            return "Neutral"
         except requests.exceptions.RequestException as e:
             logger.error(f"OpenRouter API request failed: {e}")
             return "Neutral"
-        except Exception as e:
-            logger.error(f"Sentiment analysis failed: {e}")
+        except KeyError as e:
+            logger.error(f"Invalid API response format: {e}")
+            return "Neutral"
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON response from API: {e}")
             return "Neutral"
     
     def save_uploaded_audio(self, uploaded_file) -> Optional[str]:
@@ -200,8 +235,14 @@ class PerceptionModule:
             logger.info(f"Audio file saved to: {tmp_path}")
             return tmp_path
             
-        except Exception as e:
-            logger.error(f"Failed to save audio file: {e}")
+        except OSError as e:
+            logger.error(f"Failed to save audio file - OS error: {e}")
+            return None
+        except AttributeError as e:
+            logger.error(f"Invalid uploaded file object: {e}")
+            return None
+        except ValueError as e:
+            logger.error(f"Invalid file data: {e}")
             return None
     
     def cleanup_temp_file(self, file_path: str) -> None:
@@ -215,5 +256,20 @@ class PerceptionModule:
             if file_path and os.path.exists(file_path):
                 os.unlink(file_path)
                 logger.info(f"Cleaned up temporary file: {file_path}")
-        except Exception as e:
+        except OSError as e:
             logger.warning(f"Failed to cleanup temporary file {file_path}: {e}")
+        except TypeError as e:
+            logger.warning(f"Invalid file path provided for cleanup: {e}")
+    
+    def health_check(self) -> Dict[str, any]:
+        """
+        Perform health check of the perception module.
+        
+        Returns:
+            Dict: Health check results
+        """
+        return {
+            "whisper_model_loaded": self.whisper_model is not None,
+            "openrouter_api_key_present": bool(os.environ.get("OPENROUTER_API_KEY")),
+            "module_initialized": True
+        }

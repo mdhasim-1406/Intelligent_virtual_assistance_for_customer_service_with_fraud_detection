@@ -11,13 +11,16 @@ import logging
 import requests
 from typing import Dict, List, Optional
 from langchain.memory import ConversationBufferMemory
-from langchain.schema import BaseMessage
+from langchain_core.messages import BaseMessage
 import threading
 from datetime import datetime
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Define BASE_DIR for cross-platform file paths
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Points to project-kural root
 
 
 class MemoryModule:
@@ -26,20 +29,24 @@ class MemoryModule:
     Handles both short-term (session) and long-term (persistent) memory.
     """
     
-    def __init__(self, db_path: str = "user_database/users.json"):
+    def __init__(self, db_path: str = None):
         """
         Initialize the memory module.
         
         Args:
             db_path (str): Path to the user database JSON file
         """
-        self.db_path = db_path
+        if db_path is None:
+            self.db_path = os.path.join(BASE_DIR, "user_database", "users.json")
+        else:
+            self.db_path = db_path
+        
         self.file_lock = threading.Lock()
         
         # Ensure the database file exists
         self._ensure_db_exists()
         
-        logger.info(f"Memory module initialized with database: {db_path}")
+        logger.info(f"Memory module initialized with database: {self.db_path}")
     
     def _ensure_db_exists(self) -> None:
         """Ensure the user database file exists with proper structure."""
@@ -53,7 +60,7 @@ class MemoryModule:
                     json.dump({}, f, indent=2)
                     
                 logger.info(f"Created new database file: {self.db_path}")
-        except Exception as e:
+        except OSError as e:
             logger.error(f"Failed to create database file: {e}")
             raise RuntimeError(f"Could not initialize database: {e}")
     
@@ -75,8 +82,8 @@ class MemoryModule:
             logger.info("Created new short-term memory instance")
             return memory
             
-        except Exception as e:
-            logger.error(f"Failed to create short-term memory: {e}")
+        except ImportError as e:
+            logger.error(f"Failed to create short-term memory - LangChain not available: {e}")
             # Return a basic memory instance as fallback
             return ConversationBufferMemory(memory_key="chat_history")
     
@@ -122,19 +129,17 @@ class MemoryModule:
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in database file: {e}")
             return ""
-        except Exception as e:
-            logger.error(f"Error retrieving summary for user {user_id}: {e}")
+        except IOError as e:
+            logger.error(f"I/O error retrieving summary for user {user_id}: {e}")
             return ""
     
-    def save_conversation_summary(self, user_id: str, chat_history: List[BaseMessage], 
-                                openrouter_api_key: str) -> bool:
+    def save_conversation_summary(self, user_id: str, chat_history: List[BaseMessage]) -> bool:
         """
         Generate and save a conversation summary for a user.
         
         Args:
             user_id (str): The user identifier
             chat_history (List[BaseMessage]): List of conversation messages
-            openrouter_api_key (str): OpenRouter API key for summary generation
             
         Returns:
             bool: True if successful, False otherwise
@@ -147,8 +152,10 @@ class MemoryModule:
             logger.info("No chat history to summarize")
             return True
         
+        # Get API key from environment
+        openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
         if not openrouter_api_key:
-            logger.error("OpenRouter API key not provided")
+            logger.error("OPENROUTER_API_KEY not found in environment variables")
             return False
         
         try:
@@ -165,8 +172,11 @@ class MemoryModule:
             # Save summary to database
             return self._save_summary_to_db(user_id, summary)
             
-        except Exception as e:
-            logger.error(f"Error saving conversation summary: {e}")
+        except KeyError as e:
+            logger.error(f"Missing required data for summary generation: {e}")
+            return False
+        except ValueError as e:
+            logger.error(f"Invalid data format for summary generation: {e}")
             return False
     
     def _format_chat_history(self, chat_history: List[BaseMessage]) -> str:
@@ -256,11 +266,14 @@ class MemoryModule:
         except requests.exceptions.Timeout:
             logger.error("OpenRouter API request timed out")
             return None
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"OpenRouter API connection failed: {e}")
+            return None
         except requests.exceptions.RequestException as e:
             logger.error(f"OpenRouter API request failed: {e}")
             return None
-        except Exception as e:
-            logger.error(f"Summary generation failed: {e}")
+        except KeyError as e:
+            logger.error(f"Invalid API response format: {e}")
             return None
     
     def _save_summary_to_db(self, user_id: str, summary: str) -> bool:
@@ -297,8 +310,11 @@ class MemoryModule:
                 logger.info(f"Summary saved successfully for user {user_id}")
                 return True
                 
-        except Exception as e:
+        except IOError as e:
             logger.error(f"Failed to save summary to database: {e}")
+            return False
+        except json.JSONEncodeError as e:
+            logger.error(f"Failed to encode summary data: {e}")
             return False
     
     def get_user_stats(self, user_id: str) -> Dict:
@@ -325,6 +341,6 @@ class MemoryModule:
                     "has_summary": bool(user_data.get("summary", ""))
                 }
                 
-        except Exception as e:
+        except (FileNotFoundError, json.JSONDecodeError, IOError) as e:
             logger.error(f"Error retrieving user stats: {e}")
             return {"user_id": user_id, "conversation_count": 0, "last_updated": "", "has_summary": False}

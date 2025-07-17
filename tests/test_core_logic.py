@@ -23,11 +23,11 @@ load_dotenv()
 # Add project-kural to Python path
 sys.path.insert(0, '/home/hasim001/Intelligent_virtual_assistance_for_customer_service_with_fraud_detection/project-kural')
 
-# Import Project Kural modules
+# Import Project Kural modules with explicit imports
 from core.agent import KuralAgent, ChatOpenRouter
 from core.memory import MemoryModule
 from core.perception import PerceptionModule
-from core.tools import get_billing_info, check_network_status
+from core.tools import get_billing_info, check_network_status, _get_billing_info, _check_network_status
 
 # Mock LangChain components since they might not be installed
 class MockHumanMessage:
@@ -54,7 +54,6 @@ HumanMessage = MockHumanMessage
 AIMessage = MockAIMessage
 ConversationBufferMemory = MockConversationBufferMemory
 
-
 # ===== FIXTURES =====
 
 @pytest.fixture
@@ -65,7 +64,6 @@ def api_key():
         pytest.skip("OpenRouter API key not available or is placeholder. Set OPENROUTER_API_KEY environment variable.")
     return api_key
 
-
 @pytest.fixture
 def temp_db(tmp_path):
     """Fixture to create temporary user database for testing."""
@@ -73,106 +71,169 @@ def temp_db(tmp_path):
     db_file.write_text("{}")
     return str(db_file)
 
-
 @pytest.fixture
-def mock_modules(monkeypatch):
-    """Master fixture to mock all external dependencies."""
-    # Mock whisper module
-    mock_whisper = Mock()
+def mock_whisper(monkeypatch):
+    """Fixture to mock whisper module with correct patch target."""
+    # Mock whisper module at the location where it's imported in perception.py
+    mock_whisper_module = Mock()
     mock_model = Mock()
     mock_model.transcribe.return_value = {
         "text": "Hello, I have a billing question",
         "language": "en"
     }
-    mock_whisper.load_model.return_value = mock_model
-    monkeypatch.setattr("whisper.load_model", mock_whisper.load_model)
+    mock_whisper_module.load_model.return_value = mock_model
     
-    # Mock requests.post for OpenRouter API calls
+    # Patch whisper at the location where it's imported in core.perception
+    monkeypatch.setattr("core.perception.whisper", mock_whisper_module)
+    
+    return {
+        "whisper_module": mock_whisper_module,
+        "whisper_model": mock_model
+    }
+
+@pytest.fixture
+def mock_openrouter_api(monkeypatch):
+    """Fixture to mock OpenRouter API requests."""
     mock_response = Mock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
         "choices": [{"message": {"content": "Test response"}}],
         "usage": {"total_tokens": 100}
     }
+    
+    # Patch requests.post for OpenRouter API calls
     monkeypatch.setattr("requests.post", Mock(return_value=mock_response))
     
-    # Mock gTTS if present
-    try:
-        mock_gtts = Mock()
-        mock_gtts.save = Mock()
-        monkeypatch.setattr("gtts.gTTS", mock_gtts)
-    except ImportError:
-        pass
-    
-    return {
-        "whisper_model": mock_model,
-        "requests_response": mock_response
-    }
+    return mock_response
 
+@pytest.fixture
+def mock_gtts(monkeypatch):
+    """Fixture to mock gTTS if present."""
+    try:
+        mock_gtts_class = Mock()
+        mock_gtts_instance = Mock()
+        mock_gtts_instance.save = Mock()
+        mock_gtts_class.return_value = mock_gtts_instance
+        monkeypatch.setattr("gtts.gTTS", mock_gtts_class)
+        return mock_gtts_instance
+    except ImportError:
+        return None
+
+@pytest.fixture
+def mock_modules(mock_whisper, mock_openrouter_api, mock_gtts):
+    """Master fixture that combines all mocked modules."""
+    return {
+        "whisper_model": mock_whisper["whisper_model"],
+        "requests_response": mock_openrouter_api,
+        "gtts": mock_gtts
+    }
 
 @pytest.fixture
 def initialized_memory_module(temp_db):
     """Fixture to provide initialized MemoryModule with temporary database."""
     return MemoryModule(db_path=temp_db)
 
-
 @pytest.fixture
 def initialized_perception_module(mock_modules):
     """Fixture to provide initialized PerceptionModule with mocked dependencies."""
     return PerceptionModule()
 
-
 @pytest.fixture
 def initialized_kural_agent(api_key, mock_modules):
-    """Fixture to provide initialized KuralAgent with mocked tools."""
-    # Create simple mock tools
-    mock_tools = [
-        Mock(name="get_billing_info", invoke=Mock(return_value="Mock billing info")),
-        Mock(name="check_network_status", invoke=Mock(return_value="Mock network status"))
-    ]
+    """Fixture to provide initialized KuralAgent with properly configured mock tools."""
+    # Create "intelligent" mocks for the tools with correct name attributes
+    mock_billing_tool = MagicMock()
+    mock_billing_tool.name = "get_billing_info"
+    mock_billing_tool.description = "Retrieve customer billing information"
+    mock_billing_tool.invoke = Mock(return_value="Mock billing info")
+    
+    mock_network_tool = MagicMock()
+    mock_network_tool.name = "check_network_status"
+    mock_network_tool.description = "Check network status for specific area codes"
+    mock_network_tool.invoke = Mock(return_value="Mock network status")
+    
+    # Create list of properly configured mock tools
+    mock_tools = [mock_billing_tool, mock_network_tool]
     
     return KuralAgent(openrouter_api_key=api_key, tools=mock_tools)
-
 
 # ===== TEST CASES =====
 
 def test_tools_functionality():
-    """Test that all tools return expected string formats."""
-    # Test get_billing_info
-    billing_result = get_billing_info("TEST_USER_123")
+    """Test that all tools return expected string formats with valid inputs using modern .invoke() method."""
+    # Test get_billing_info with valid input using modern invoke method
+    billing_result = get_billing_info.invoke({"user_id": "TEST_USER_123"})
     assert isinstance(billing_result, str)
     assert "Billing Information" in billing_result
     assert "Customer ID: TEST_USER_123" in billing_result
     assert "Current Bill Amount:" in billing_result
     assert "Due Date:" in billing_result
     
-    # Test with invalid user ID
-    error_result = get_billing_info("")
-    assert "Error: Invalid user ID" in error_result
-    
-    # Test check_network_status
-    network_result = check_network_status("555")
+    # Test check_network_status with valid input using modern invoke method
+    network_result = check_network_status.invoke({"area_code": "555"})
     assert isinstance(network_result, str)
     assert "Network Status for Area Code 555:" in network_result
-    assert any(status in network_result for status in ["NORMAL", "OUTAGE", "DEGRADED"])
-    
-    # Test with invalid area code
-    error_result = check_network_status("abc")
-    assert "Error:" in error_result
-    assert "not a valid area code" in error_result
+    assert any(status in network_result for status in ["NORMAL", "OUTAGE", "DEGRADED", "optimal", "good", "fair", "poor"])
 
+def test_tools_edge_cases():
+    """Test edge cases and error conditions for raw tool functions - bypasses Pydantic validation."""
+    # Test _get_billing_info with None input - should return error message
+    result = _get_billing_info(None)
+    assert isinstance(result, str)
+    assert "Error:" in result
+    assert "valid user ID must be provided" in result
+    
+    # Test _get_billing_info with non-string input - should return error message
+    result = _get_billing_info(123)
+    assert isinstance(result, str)
+    assert "Error:" in result
+    assert "Invalid user ID format" in result
+    
+    # Test _get_billing_info with empty string - should return error message
+    result = _get_billing_info("")
+    assert isinstance(result, str)
+    assert "Error:" in result
+    assert "cannot be empty" in result
+    
+    # Test _check_network_status with None input - should return error message
+    result = _check_network_status(None)
+    assert isinstance(result, str)
+    assert "Error:" in result
+    assert "valid area code must be provided" in result
+    
+    # Test _check_network_status with non-string input - should return error message
+    result = _check_network_status(123)
+    assert isinstance(result, str)
+    assert "Error:" in result
+    assert "Invalid area code format" in result
+    
+    # Test _check_network_status with invalid length - should return error message
+    result = _check_network_status("12")  # Too short
+    assert isinstance(result, str)
+    assert "Error:" in result
+    assert "not a valid area code" in result
+    
+    result = _check_network_status("1234")  # Too long
+    assert isinstance(result, str)
+    assert "Error:" in result
+    assert "not a valid area code" in result
+    
+    # Test _check_network_status with non-numeric input - should return error message
+    result = _check_network_status("55a")  # Contains letters
+    assert isinstance(result, str)
+    assert "Error:" in result
+    assert "non-numeric characters" in result
 
 def test_perception_sentiment_analysis(initialized_perception_module, mock_modules):
     """Test sentiment analysis with different API responses."""
     perception = initialized_perception_module
-    api_key = "test_key"
     
     # Test Positive sentiment
     mock_modules["requests_response"].json.return_value = {
         "choices": [{"message": {"content": "Positive"}}]
     }
     
-    result = perception.analyze_sentiment("I love this service!", api_key)
+    result = perception.analyze_sentiment("I love this service!")
     assert result == "Positive"
     
     # Test Negative sentiment
@@ -180,7 +241,7 @@ def test_perception_sentiment_analysis(initialized_perception_module, mock_modul
         "choices": [{"message": {"content": "Negative"}}]
     }
     
-    result = perception.analyze_sentiment("This is terrible!", api_key)
+    result = perception.analyze_sentiment("This is terrible!")
     assert result == "Negative"
     
     # Test Neutral sentiment
@@ -188,28 +249,22 @@ def test_perception_sentiment_analysis(initialized_perception_module, mock_modul
         "choices": [{"message": {"content": "Neutral"}}]
     }
     
-    result = perception.analyze_sentiment("What is my balance?", api_key)
+    result = perception.analyze_sentiment("What is my balance?")
     assert result == "Neutral"
     
     # Test API error - should return Neutral as fallback
     mock_modules["requests_response"].status_code = 500
-    result = perception.analyze_sentiment("Some text", api_key)
+    result = perception.analyze_sentiment("Some text")
     assert result == "Neutral"
     
     # Test empty text
-    result = perception.analyze_sentiment("", api_key)
+    result = perception.analyze_sentiment("")
     assert result == "Neutral"
-    
-    # Test no API key
-    result = perception.analyze_sentiment("Some text", "")
-    assert result == "Neutral"
-
 
 def test_memory_lifecycle(initialized_memory_module, mock_modules):
     """Test complete memory lifecycle operations."""
     memory = initialized_memory_module
     user_id = "test_user_123"
-    api_key = "test_key"
     
     # Test get_long_term_summary for new user
     summary = memory.get_long_term_summary(user_id)
@@ -228,8 +283,8 @@ def test_memory_lifecycle(initialized_memory_module, mock_modules):
         AIMessage(content="Your current balance is $45.99")
     ]
     
-    # Save conversation summary
-    success = memory.save_conversation_summary(user_id, chat_history, api_key)
+    # Save conversation summary (now uses environment variable for API key)
+    success = memory.save_conversation_summary(user_id, chat_history)
     assert success is True
     
     # Get long-term summary after saving
@@ -244,7 +299,6 @@ def test_memory_lifecycle(initialized_memory_module, mock_modules):
     assert users_data[user_id]["summary"] == "Test summary"
     assert "last_updated" in users_data[user_id]
     assert users_data[user_id]["conversation_count"] == 1
-
 
 def test_agent_persona_loading_logic(initialized_kural_agent, monkeypatch):
     """Test that agent loads correct persona based on sentiment."""
@@ -295,7 +349,6 @@ def test_agent_persona_loading_logic(initialized_kural_agent, monkeypatch):
     prompt = captured_prompts[0].lower()
     assert any(keyword in prompt for keyword in ["professional", "direct", "clear", "accurate"])
 
-
 def test_perception_audio_transcription(initialized_perception_module, mock_modules):
     """Test audio transcription functionality."""
     perception = initialized_perception_module
@@ -327,7 +380,6 @@ def test_perception_audio_transcription(initialized_perception_module, mock_modu
     assert "error" in result
     assert "Audio file not found" in result["error"]
 
-
 def test_memory_error_handling(initialized_memory_module, mock_modules):
     """Test memory module error handling scenarios."""
     memory = initialized_memory_module
@@ -337,18 +389,12 @@ def test_memory_error_handling(initialized_memory_module, mock_modules):
     assert summary == ""
     
     # Test save_conversation_summary with empty user_id
-    success = memory.save_conversation_summary("", [], "test_key")
+    success = memory.save_conversation_summary("", [])
     assert success is False
     
     # Test save_conversation_summary with empty chat history
-    success = memory.save_conversation_summary("test_user", [], "test_key")
+    success = memory.save_conversation_summary("test_user", [])
     assert success is True  # Should succeed with empty history
-    
-    # Test save_conversation_summary without API key
-    chat_history = [HumanMessage(content="test")]
-    success = memory.save_conversation_summary("test_user", chat_history, "")
-    assert success is False
-
 
 def test_agent_health_check(initialized_kural_agent):
     """Test agent health check functionality."""
@@ -369,10 +415,9 @@ def test_agent_health_check(initialized_kural_agent):
     assert "Positive" in persona_files
     assert "Neutral" in persona_files
 
-
 def test_chat_openrouter_integration(api_key, mock_modules):
     """Test ChatOpenRouter class functionality."""
-    chat = ChatOpenRouter(api_key=api_key)
+    chat = ChatOpenRouter()
     
     # Test successful API call
     mock_modules["requests_response"].json.return_value = {
@@ -393,7 +438,6 @@ def test_chat_openrouter_integration(api_key, mock_modules):
     
     assert "error" in result
     assert "trouble processing" in result["content"]
-
 
 def test_memory_user_stats(initialized_memory_module):
     """Test memory user statistics functionality."""
@@ -424,30 +468,30 @@ def test_memory_user_stats(initialized_memory_module):
     assert stats["has_summary"] is True
     assert stats["last_updated"] != ""
 
-
-def test_tools_edge_cases():
-    """Test edge cases and error conditions for tools."""
-    # Test get_billing_info with None input
-    result = get_billing_info(None)
-    assert "Error: Invalid user ID" in result
+def test_robust_tool_validation():
+    """Test that raw tool functions handle all edge cases gracefully without raising exceptions."""
+    # Test various invalid inputs for _get_billing_info
+    invalid_inputs = [None, "", "  ", 123, [], {}, True, False]
     
-    # Test get_billing_info with non-string input
-    result = get_billing_info(123)
-    assert "Error: Invalid user ID" in result
+    for invalid_input in invalid_inputs:
+        result = _get_billing_info(invalid_input)
+        assert isinstance(result, str)
+        assert "Error:" in result
+        # Should not raise any exceptions
     
-    # Test check_network_status with various invalid inputs
-    result = check_network_status(None)
-    assert "Error: Invalid area code" in result
+    # Test various invalid inputs for _check_network_status
+    for invalid_input in invalid_inputs:
+        result = _check_network_status(invalid_input)
+        assert isinstance(result, str)
+        assert "Error:" in result
+        # Should not raise any exceptions
     
-    result = check_network_status("12")  # Too short
-    assert "not a valid area code" in result
-    
-    result = check_network_status("1234")  # Too long
-    assert "not a valid area code" in result
-    
-    result = check_network_status("55a")  # Contains letters
-    assert "not a valid area code" in result
-
+    # Test specific invalid formats
+    invalid_area_codes = ["12", "1234", "abc", "55a", "a55"]
+    for invalid_code in invalid_area_codes:
+        result = _check_network_status(invalid_code)
+        assert isinstance(result, str)
+        assert "Error:" in result
 
 # ===== INTEGRATION TESTS =====
 
@@ -464,7 +508,7 @@ def test_full_workflow_integration(initialized_kural_agent, initialized_memory_m
     }
     
     # Analyze sentiment
-    sentiment = perception.analyze_sentiment("I'm very frustrated!", "test_key")
+    sentiment = perception.analyze_sentiment("I'm very frustrated!")
     assert sentiment == "Negative"
     
     # Mock agent response
@@ -484,3 +528,21 @@ def test_full_workflow_integration(initialized_kural_agent, initialized_memory_m
     assert response == "I understand your frustration. Let me help you."
     assert len(captured_prompts) == 1
     assert "empathetic" in captured_prompts[0].lower() or "understanding" in captured_prompts[0].lower()
+
+def test_decorated_tools_with_invoke():
+    """Test that decorated tools work correctly with the modern .invoke() method."""
+    # Test valid inputs with decorated tools
+    result = get_billing_info.invoke({"user_id": "VALID_USER_123"})
+    assert isinstance(result, str)
+    assert "Billing Information" in result
+    assert "VALID_USER_123" in result
+    
+    result = check_network_status.invoke({"area_code": "555"})
+    assert isinstance(result, str)
+    assert "Network Status for Area Code 555" in result
+    
+    # Test that decorated tools have the expected attributes
+    assert hasattr(get_billing_info, 'name')
+    assert hasattr(check_network_status, 'name')
+    assert hasattr(get_billing_info, 'invoke')
+    assert hasattr(check_network_status, 'invoke')

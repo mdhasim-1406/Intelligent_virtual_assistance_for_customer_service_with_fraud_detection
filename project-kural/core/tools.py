@@ -6,13 +6,11 @@ and perform service operations like billing inquiries and network status checks.
 """
 
 from langchain.tools import tool
-from typing import str
 import random
 from datetime import datetime, timedelta
 
 
-@tool
-def get_billing_info(user_id: str) -> str:
+def _get_billing_info(user_id: str) -> str:
     """
     Retrieve billing information for a specific user.
     
@@ -22,8 +20,22 @@ def get_billing_info(user_id: str) -> str:
     Returns:
         str: Formatted billing information including current balance and due date
     """
-    if not user_id or not isinstance(user_id, str):
-        return "Error: Invalid user ID provided. Please provide a valid customer ID."
+    # Robust input validation - handle all invalid input types
+    if user_id is None:
+        return "Error: A valid user ID must be provided. Please ask the customer for their account ID or phone number."
+    
+    if not isinstance(user_id, str):
+        return "Error: Invalid user ID format. Please provide the user ID as text (letters and numbers)."
+    
+    if not user_id.strip():
+        return "Error: User ID cannot be empty. Please provide a valid customer ID."
+    
+    # Clean the user ID
+    user_id = user_id.strip()
+    
+    # Additional validation for realistic user ID format
+    if len(user_id) < 3:
+        return "Error: User ID too short. Please provide a complete customer ID."
     
     # Simulate realistic billing data
     bill_amounts = [45.99, 67.50, 89.99, 123.45, 156.78]
@@ -53,8 +65,7 @@ def get_billing_info(user_id: str) -> str:
     return billing_info.strip()
 
 
-@tool
-def check_network_status(area_code: str) -> str:
+def _check_network_status(area_code: str) -> str:
     """
     Check network status and outages for a specific area code.
     
@@ -64,13 +75,25 @@ def check_network_status(area_code: str) -> str:
     Returns:
         str: Network status information including any ongoing issues
     """
-    if not area_code or not isinstance(area_code, str):
-        return "Error: Invalid area code provided. Please provide a valid 3-digit area code."
+    # Robust input validation - handle all invalid input types
+    if area_code is None:
+        return "Error: A valid area code must be provided. Please ask the customer for their area code (first 3 digits of phone number)."
+    
+    if not isinstance(area_code, str):
+        return "Error: Invalid area code format. Please provide the area code as text (3 digits)."
+    
+    if not area_code.strip():
+        return "Error: Area code cannot be empty. Please provide a valid 3-digit area code."
     
     # Clean and validate area code
     area_code = area_code.strip()
-    if not area_code.isdigit() or len(area_code) != 3:
-        return f"Error: '{area_code}' is not a valid area code. Please provide a 3-digit area code."
+    
+    # Additional validation for area code format
+    if not area_code.isdigit():
+        return f"Error: '{area_code}' contains non-numeric characters. Please provide a 3-digit area code (numbers only)."
+    
+    if len(area_code) != 3:
+        return f"Error: '{area_code}' is not a valid area code. Please provide exactly 3 digits (e.g., 555, 312, 917)."
     
     # Simulate network conditions
     network_conditions = [
@@ -125,6 +148,11 @@ def check_network_status(area_code: str) -> str:
         No known issues in your area. If you're experiencing problems, 
         try restarting your device or contact technical support.
         """
+
+
+# Create decorated tools from the raw functions
+get_billing_info = tool(_get_billing_info)
+check_network_status = tool(_check_network_status)
 
 
 # Additional utility functions for the tools
